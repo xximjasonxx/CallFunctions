@@ -23,12 +23,11 @@ namespace CallFunctions
         }
 
         [Function("HandleCallEventFunction")]
-        public async Task<HandleEventResponseModel> HandleEvent(
+        public async Task<HttpResponseData> HandleEvent(
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "handle/event")] HttpRequestData request)
         {
             var requestBody = await new StreamReader(request.Body).ReadToEndAsync();
             var cloudEvents = CloudEvent.ParseMany(BinaryData.FromString(requestBody), skipValidation: true).ToList();
-            dynamic document = null;
             foreach (var cloudEvent in cloudEvents)
             {
                 var parsedEvent = CallAutomationEventParser.Parse(cloudEvent);
@@ -48,20 +47,10 @@ namespace CallFunctions
 
 
                     await callMedia.PlayToAllAsync(playSource);
-                    document = new
-                    {
-                        id = Guid.NewGuid().ToString(),
-                        callConnection.CallConnectionId,
-                        CallState = "Answered"
-                    };
                 }
             }
 
-            return new HandleEventResponseModel
-            {
-                Result = request.CreateResponse(HttpStatusCode.OK),
-                Document = document
-            };
+            return request.CreateResponse(HttpStatusCode.OK);
         }
     }
 }
