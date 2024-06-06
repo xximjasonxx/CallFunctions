@@ -1,4 +1,5 @@
 using System.Net;
+using Azure.Communication;
 using Azure.Communication.CallAutomation;
 using Azure.Messaging;
 using CallFunctions.Models;
@@ -12,10 +13,15 @@ namespace CallFunctions
     public class HandleCallEventFunction
     {
         private readonly ILogger _logger;
+        private readonly IConfiguration _configuration;
+        private readonly CallAutomationClient _callAutomationClient;
         
-        public HandleCallEventFunction(ILoggerFactory loggerFactory)
+        public HandleCallEventFunction(ILoggerFactory loggerFactory, IConfiguration configuration)
         {
             _logger = loggerFactory.CreateLogger<HandleCallEventFunction>();
+            _configuration = configuration;
+
+            _callAutomationClient = new CallAutomationClient(configuration["AcsConnectionString"]);
         }
 
         [Function("HandleCallEventFunction")]
@@ -33,21 +39,47 @@ namespace CallFunctions
 
                 if (parsedEvent is CallConnected callConnected)
                 {
-                    // we are receiving a connection, we need to send our greeting and log the call
-                    // into Cosmos for tracking
-                    outgoingCloudEvent = new CloudEvent(nameof(HandleCallEventFunction), "CallEvent.SpeakText",
-                        new SpeakTextEvent
-                        {
-                            CallConnectionId = callConnected.CallConnectionId,
-                            Text = "Hello, I'm Katie. Welcome to Dashing Dish. Go ahead and ask a question and I'll do my best to help you."
-                        });
+                    var callConnection = _callAutomationClient.GetCallConnection(callConnected.CallConnectionId);
+                    var callMedia = callConnection.GetCallMedia();
+                    var properties = await callConnection.GetCallConnectionPropertiesAsync();
+
+                    var playSource = new TextSource("Hello, I'm Katie. Welcome to Dashing Dish. Go ahead and ask a question and I'll do my best to help you.")
+                    {
+                        SourceLocale = "en-US",
+                        CustomVoiceEndpointId = _configuration["CustomVoiceEndpointId"],
+                        VoiceName = _configuration["NeuralVoiceName"]
+                    };
+
+                    var recognizeOptions = new CallMediaRecognizeSpeechOptions(properties.Value.Source)
+                    {
+                        EndSilenceTimeout = TimeSpan.FromSeconds(1),
+                        Prompt = playSource
+                    };
+
+                    await callMedia.StartRecognizingAsync(recognizeOptions);
+                }
+
+                if (parsedEvent is RecognizeCompleted recognizeCompleted)
+                {
+                    var callConnection = _callAutomationClient.GetCallConnection(recognizeCompleted.CallConnectionId);
+                    var callMedia = callConnection.GetCallMedia();
+                    var properties = await callConnection.GetCallConnectionPropertiesAsync();
+
+                    var speechResult = (SpeechResult)recognizeCompleted.RecognizeResult;
+                    var playSource = new TextSource($"You said: {speechResult.Speech}")
+                    {
+                        SourceLocale = "en-US",
+                        CustomVoiceEndpointId = _configuration["CustomVoiceEndpointId"],
+                        VoiceName = _configuration["NeuralVoiceName"]
+                    };
+
+                    await callMedia.PlayAsync(new PlayOptions(playSource, [properties.Value.Source]));
                 }
             }
 
             return new HandleEventResponseModel
             {
-                Result = request.CreateResponse(HttpStatusCode.OK),
-                Event = outgoingCloudEvent
+                Result = request.CreateResponse(HttpStatusCode.OK)
             };
         }
     }
