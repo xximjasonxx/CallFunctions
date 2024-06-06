@@ -12,45 +12,43 @@ namespace CallFunctions
     public class HandleCallEventFunction
     {
         private readonly ILogger _logger;
-        private readonly CallAutomationClient _callAutomationClient;
-        private readonly IConfiguration _configuration;
-
-        public HandleCallEventFunction(ILoggerFactory loggerFactory, IConfiguration configuration)
+        
+        public HandleCallEventFunction(ILoggerFactory loggerFactory)
         {
             _logger = loggerFactory.CreateLogger<HandleCallEventFunction>();
-            _callAutomationClient = new CallAutomationClient(configuration["AcsConnectionString"]);
-            _configuration = configuration;
         }
 
         [Function("HandleCallEventFunction")]
-        public async Task<HttpResponseData> HandleEvent(
+        public async Task<HandleEventResponseModel> HandleEvent(
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "handle/event")] HttpRequestData request)
         {
             var requestBody = await new StreamReader(request.Body).ReadToEndAsync();
             var cloudEvents = CloudEvent.ParseMany(BinaryData.FromString(requestBody), skipValidation: true).ToList();
+            CloudEvent outgoingCloudEvent = null;
+
             foreach (var cloudEvent in cloudEvents)
             {
                 var parsedEvent = CallAutomationEventParser.Parse(cloudEvent);
-                _logger.LogInformation($"Received event of type {cloudEvent.Type} with call connection id {parsedEvent.CallConnectionId}");
-
-                var callConnection = _callAutomationClient.GetCallConnection(parsedEvent.CallConnectionId);
-                var callMedia = callConnection.GetCallMedia();
+                _logger.LogInformation($"Received event of type {cloudEvent.Type}");
 
                 if (parsedEvent is CallConnected callConnected)
                 {
-                    var playSource = new TextSource($"You are connected - Id: {callConnected.CallConnectionId}")
-                    {
-                        SourceLocale = "en-US",
-                        CustomVoiceEndpointId = _configuration["CustomVoiceEndpointId"],
-                        VoiceName = _configuration["NeuralVoiceName"]
-                    };
-
-
-                    await callMedia.PlayToAllAsync(playSource);
+                    // we are receiving a connection, we need to send our greeting and log the call
+                    // into Cosmos for tracking
+                    outgoingCloudEvent = new CloudEvent(nameof(HandleCallEventFunction), "CallEvent.SpeakText",
+                        new SpeakTextEvent
+                        {
+                            CallConnectionId = callConnected.CallConnectionId,
+                            Text = "Hello, I'm Katie. Welcome to Dashing Dish. Go ahead and ask a question and I'll do my best to help you."
+                        });
                 }
             }
 
-            return request.CreateResponse(HttpStatusCode.OK);
+            return new HandleEventResponseModel
+            {
+                Result = request.CreateResponse(HttpStatusCode.OK),
+                Event = outgoingCloudEvent
+            };
         }
     }
 }

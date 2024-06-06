@@ -1,3 +1,5 @@
+
+using Azure.Messaging;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 
@@ -8,7 +10,7 @@ namespace CallFunctions.Models
         [HttpResult]
         public HttpResponseData Result { get; set; }
 
-        [CosmosDBOutput("CallTesting", "Calls", Connection = "CosmosDBConnection")]
-        public dynamic Document { get; set; }
+        [EventGridOutput(TopicEndpointUri = "EventGridTopicUri", TopicKeySetting = "EventGridTopicKey")]
+        public CloudEvent Event { get; set; }
     }
 }
