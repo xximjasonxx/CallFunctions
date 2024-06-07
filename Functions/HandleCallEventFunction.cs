@@ -1,4 +1,6 @@
 using System.Net;
+using Azure;
+using Azure.AI.OpenAI;
 using Azure.Communication;
 using Azure.Communication.CallAutomation;
 using Azure.Messaging;
@@ -66,7 +68,45 @@ namespace CallFunctions
                     var properties = await callConnection.GetCallConnectionPropertiesAsync();
 
                     var speechResult = (SpeechResult)recognizeCompleted.RecognizeResult;
-                    var playSource = new TextSource($"You said: {speechResult.Speech}")
+                    var openAiEndpointBase = _configuration["OpenAiEndpoint"];
+                    var openAiApiKey = _configuration["OpenAiApiKey"];
+                    var deploymentId = "gpt-40-deployment";
+
+                    var searchEndpoint = _configuration["SearchEndpoint"];
+                    var searchApiKey = _configuration["SearchApiKey"];
+                    var searchIndexName = _configuration["SearchIndexName"];
+
+                    var client = new OpenAIClient(new Uri(openAiEndpointBase), new AzureKeyCredential(openAiApiKey));
+                    var chatCompletionsOptions = new ChatCompletionsOptions()
+                    {
+                        DeploymentName = deploymentId,
+                        Messages =
+                        {
+                            new ChatRequestSystemMessage("You are a helpful assistant working for the Dashing Dish company. You will summerize any response so as not to exceed 400 characters in length"),
+                            new ChatRequestUserMessage(speechResult.Speech)
+                        },
+                        
+                        AzureExtensionsOptions = new AzureChatExtensionsOptions()
+                        {
+                            Extensions =
+                            {
+                                new AzureSearchChatExtensionConfiguration
+                                {
+                                    SearchEndpoint = new Uri(searchEndpoint),
+                                    Authentication = new OnYourDataApiKeyAuthenticationOptions(searchApiKey),
+                                    IndexName = searchIndexName
+                                }
+                            }
+                        }
+                    };
+
+                    var response = await client.GetChatCompletionsAsync(
+                        chatCompletionsOptions);
+                    
+                    var responseContent = response.Value.Choices.First();
+                    _logger.LogInformation($"Lenght of response from OpenAI: {responseContent.Message.Content.Length}");
+
+                    var playSource = new TextSource(responseContent.Message.Content)
                     {
                         SourceLocale = "en-US",
                         CustomVoiceEndpointId = _configuration["CustomVoiceEndpointId"],
